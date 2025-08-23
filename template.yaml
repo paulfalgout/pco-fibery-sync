@@ -1,0 +1,70 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: PCO ↔ Fibery tiny sync (Node 20)
+
+Globals:
+  Function:
+    Runtime: nodejs20.x
+    Timeout: 120
+    MemorySize: 256
+    Tracing: Active
+
+Parameters:
+  PCOAppId:
+    Type: String
+  PCOSecret:
+    Type: String
+  FiberyHost:
+    Type: String
+  FiberySpace:
+    Type: String
+  FiberyToken:
+    Type: String
+  SSMPath:
+    Type: String
+    Default: /pco-fibery-sync
+
+Resources:
+  SyncFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: src/handler.handler
+      Environment:
+        Variables:
+          PCO_APP_ID: !Ref PCOAppId
+          PCO_SECRET: !Ref PCOSecret
+          FIBERY_HOST: !Ref FiberyHost
+          FIBERY_SPACE: !Ref FiberySpace
+          FIBERY_TOKEN: !Ref FiberyToken
+          SSM_PATH: !Ref SSMPath
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ssm:GetParameter
+                - ssm:PutParameter
+              Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SSMPath}/*
+        - CloudWatchLogsFullAccess
+
+  SyncSchedule:
+    Type: AWS::Events::Rule
+    Properties:
+      ScheduleExpression: rate(15 minutes)
+      State: DISABLED  # enable after testing
+      Targets:
+        - Arn: !GetAtt SyncFunction.Arn
+          Id: sync-lambda
+    DependsOn: SyncFunction
+
+  PermissionForEventsToInvokeLambda:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref SyncFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt SyncSchedule.Arn
+
+Outputs:
+  FunctionName:
+    Value: !Ref SyncFunction

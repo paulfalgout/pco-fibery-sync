@@ -1,0 +1,10 @@
+{
+  "name": "pco-fibery-sync",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "dependencies": {
+    "node-fetch": "^3.3.2",
+    "@aws-sdk/client-ssm": "^3.620.0"
+  }
+}
