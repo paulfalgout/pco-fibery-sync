@@ -11,8 +11,24 @@ function hdr() {
 
 // Utilities to build fully-qualified field names
 const F = {
-  People: (f) => `${FIBERY_SPACE}/People/${f}`,
-  Household: (f) => `${FIBERY_SPACE}/Household/${f}`,
+  People: (f) => {
+    // Handle shared fields at space level
+    if (f === 'Name') return `${FIBERY_SPACE}/Name`;
+    // Handle database-specific fields
+    if (f === 'Person ID') return `${FIBERY_SPACE}/Person ID`;
+    if (f === 'Household') return `${FIBERY_SPACE}/Household`;
+    // Default fallback for any other fields
+    return `${FIBERY_SPACE}/${f}`;
+  },
+  Household: (f) => {
+    // Handle shared fields at space level  
+    if (f === 'Name') return `${FIBERY_SPACE}/Name`;
+    // Handle database-specific fields
+    if (f === 'Household ID') return `${FIBERY_SPACE}/Household ID`;
+    if (f === 'Members') return `${FIBERY_SPACE}/Members`;
+    // Default fallback for any other fields
+    return `${FIBERY_SPACE}/${f}`;
+  },
 };
 
 // Test Fibery connection and schema
@@ -27,9 +43,11 @@ export async function fiberyTestConnection() {
     const body = [{
       command: 'fibery.entity/query',
       args: {
-        'q/from': `${FIBERY_SPACE}/People`,
-        'q/select': ['fibery/id'],
-        'q/limit': 1
+        query: {
+          'q/from': `${FIBERY_SPACE}/People`,
+          'q/select': ['fibery/id'],
+          'q/limit': 1
+        }
       }
     }];
     
@@ -45,33 +63,83 @@ export async function fiberyTestConnection() {
 }
 
 export async function fiberyQueryPeopleSince(tsISO) {
-  const body = [{
-    command: 'fibery.entity/query',
-    args: {
-      'q/from': `${FIBERY_SPACE}/People`,
-      'q/select': ['fibery/id', F.People('Name'), F.People('Person ID'), F.People('Household'), 'fibery/modification-date'],
-      'q/where': tsISO ? ['>', 'fibery/modification-date', tsISO] : null,
-      'q/limit': 1000
+  try {
+    const queryArgs = {
+      query: {
+        'q/from': `${FIBERY_SPACE}/People`,
+        'q/select': ['fibery/id', F.People('Name'), F.People('Person ID'), F.People('Household'), 'fibery/modification-date'],
+        'q/limit': 1000
+      }
+    };
+
+    // Add where clause with proper parameter formatting if timestamp provided
+    if (tsISO) {
+      queryArgs.query['q/where'] = ['>', ['fibery/modification-date'], '$timestamp'];
+      queryArgs.params = { '$timestamp': tsISO };
     }
-  }];
-  const res = await http(FIBERY_API, { method: 'POST', headers: hdr(), body: JSON.stringify(body) });
-  const [out] = await res.json();
-  return out.result || [];
+
+    const body = [{
+      command: 'fibery.entity/query',
+      args: queryArgs
+    }];
+    
+    const res = await http(FIBERY_API, { method: 'POST', headers: hdr(), body: JSON.stringify(body) });
+    const result = await res.json();
+    console.log('Fibery people query response:', JSON.stringify(result, null, 2));
+    
+    const [out] = result;
+    const data = out?.result || [];
+    
+    if (!Array.isArray(data)) {
+      console.warn('Fibery people query did not return an array:', data);
+      return [];
+    }
+    
+    return data;
+  } catch (error) {
+    console.error('Error querying Fibery people:', error);
+    return [];
+  }
 }
 
 export async function fiberyQueryHouseholdsSince(tsISO) {
-  const body = [{
-    command: 'fibery.entity/query',
-    args: {
-      'q/from': `${FIBERY_SPACE}/Household`,
-      'q/select': ['fibery/id', F.Household('Name'), F.Household('Household ID'), F.Household('Members'), 'fibery/modification-date'],
-      'q/where': tsISO ? ['>', 'fibery/modification-date', tsISO] : null,
-      'q/limit': 1000
+  try {
+    const queryArgs = {
+      query: {
+        'q/from': `${FIBERY_SPACE}/Household`,
+        'q/select': ['fibery/id', F.Household('Name'), F.Household('Household ID'), F.Household('Members'), 'fibery/modification-date'],
+        'q/limit': 1000
+      }
+    };
+
+    // Add where clause with proper parameter formatting if timestamp provided
+    if (tsISO) {
+      queryArgs.query['q/where'] = ['>', ['fibery/modification-date'], '$timestamp'];
+      queryArgs.params = { '$timestamp': tsISO };
     }
-  }];
-  const res = await http(FIBERY_API, { method: 'POST', headers: hdr(), body: JSON.stringify(body) });
-  const [out] = await res.json();
-  return out.result || [];
+
+    const body = [{
+      command: 'fibery.entity/query',
+      args: queryArgs
+    }];
+    
+    const res = await http(FIBERY_API, { method: 'POST', headers: hdr(), body: JSON.stringify(body) });
+    const result = await res.json();
+    console.log('Fibery households query response:', JSON.stringify(result, null, 2));
+    
+    const [out] = result;
+    const data = out?.result || [];
+    
+    if (!Array.isArray(data)) {
+      console.warn('Fibery households query did not return an array:', data);
+      return [];
+    }
+    
+    return data;
+  } catch (error) {
+    console.error('Error querying Fibery households:', error);
+    return [];
+  }
 }
 
 export async function fiberyUpsertHouseholds(items) {
@@ -104,10 +172,13 @@ export async function fiberyUpsertHouseholds(items) {
   const find = [{
     command: 'fibery.entity/query',
     args: {
-      'q/from': `${FIBERY_SPACE}/Household`,
-      'q/select': ['fibery/id', F.Household('Household ID')],
-      'q/where': ['in', F.Household('Household ID'), ids],
-      'q/limit': ids.length
+      query: {
+        'q/from': `${FIBERY_SPACE}/Household`,
+        'q/select': ['fibery/id', F.Household('Household ID')],
+        'q/where': ['in', [F.Household('Household ID')], '$ids'],
+        'q/limit': ids.length
+      },
+      params: { '$ids': ids }
     }
   }];
   const foundRes = await http(FIBERY_API, { method: 'POST', headers: hdr(), body: JSON.stringify(find) });
@@ -142,10 +213,13 @@ export async function fiberyUpsertPeople(items, { householdIndexById } = {}) {
   const find = [{
     command: 'fibery.entity/query',
     args: {
-      'q/from': `${FIBERY_SPACE}/People`,
-      'q/select': ['fibery/id', F.People('Person ID')],
-      'q/where': ['in', F.People('Person ID'), ids],
-      'q/limit': ids.length
+      query: {
+        'q/from': `${FIBERY_SPACE}/People`,
+        'q/select': ['fibery/id', F.People('Person ID')],
+        'q/where': ['in', [F.People('Person ID')], '$ids'],
+        'q/limit': ids.length
+      },
+      params: { '$ids': ids }
     }
   }];
   const foundRes = await http(FIBERY_API, { method: 'POST', headers: hdr(), body: JSON.stringify(find) });

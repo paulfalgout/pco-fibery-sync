@@ -60,19 +60,33 @@ export const handler = async () => {
   await fiberyUpsertPeople(peepMapped, { householdIndexById: hhIndex });
 
   // === Fibery -> PCO ===
+  console.log('Querying Fibery for changes...');
   const [fibPeople, fibHh] = await Promise.all([
     fiberyQueryPeopleSince(fiberyLast),
     fiberyQueryHouseholdsSince(fiberyLast),
   ]);
 
-  for (const h of fibHh.slice(0, MAX_PER_RUN)) {
+  console.log('Fibery query results:', {
+    peopleType: typeof fibPeople,
+    peopleIsArray: Array.isArray(fibPeople),
+    peopleLength: Array.isArray(fibPeople) ? fibPeople.length : 'N/A',
+    householdsType: typeof fibHh,
+    householdsIsArray: Array.isArray(fibHh),
+    householdsLength: Array.isArray(fibHh) ? fibHh.length : 'N/A'
+  });
+
+  // Ensure we have arrays
+  const safeFibHh = Array.isArray(fibHh) ? fibHh : [];
+  const safeFibPeople = Array.isArray(fibPeople) ? fibPeople : [];
+
+  for (const h of safeFibHh.slice(0, MAX_PER_RUN)) {
     await pcoUpsertHousehold({
       householdId: h[`${process.env.FIBERY_SPACE}/Household/Household ID`],
       name: h[`${process.env.FIBERY_SPACE}/Household/Name`]
     });
   }
 
-  for (const p of fibPeople.slice(0, MAX_PER_RUN)) {
+  for (const p of safeFibPeople.slice(0, MAX_PER_RUN)) {
     const rel = p[`${process.env.FIBERY_SPACE}/People/Household`];
     await pcoUpsertPerson({
       personId: p[`${process.env.FIBERY_SPACE}/People/Person ID`],
@@ -89,7 +103,7 @@ export const handler = async () => {
 
   console.log(JSON.stringify({
     pcoPulled: { people: pcoPeep.length, households: pcoHh.length },
-    fiberyPulled: { people: fibPeople.length, households: fibHh.length },
+    fiberyPulled: { people: safeFibPeople.length, households: safeFibHh.length },
     ms: Date.now() - started,
   }));
 
