@@ -1,12 +1,26 @@
 import { getCursor, setCursor } from './state.js';
-import { pcoPeopleSince, pcoHouseholdsSince, pcoUpsertHousehold, pcoUpsertPerson } from './pco.js';
-import { fiberyQueryPeopleSince, fiberyQueryHouseholdsSince, fiberyUpsertHouseholds, fiberyUpsertPeople } from './fibery.js';
+import { pcoPeopleSince, pcoHouseholdsSince, pcoUpsertHousehold, pcoUpsertPerson, pcoTestConnection } from './pco.js';
+import { fiberyQueryPeopleSince, fiberyQueryHouseholdsSince, fiberyUpsertHouseholds, fiberyUpsertPeople, fiberyTestConnection } from './fibery.js';
 
 const MAX_PER_RUN = 500; // guardrail
 
 export const handler = async () => {
   const started = Date.now();
   const nowISO = new Date().toISOString();
+  
+  console.log('Starting PCO ↔ Fibery sync...');
+  
+  // Test connections first
+  try {
+    await Promise.all([
+      fiberyTestConnection(),
+      pcoTestConnection()
+    ]);
+    console.log('✅ Both API connections successful');
+  } catch (error) {
+    console.error('❌ API connection test failed, aborting sync');
+    throw error;
+  }
 
   const [pcoLast, fiberyLast] = await Promise.all([
     getCursor('pcoLastSync'),
@@ -20,10 +34,14 @@ export const handler = async () => {
   ]);
 
   // Upsert Households first
+  console.log(`Processing ${pcoHh.length} PCO households`);
   const hhMapped = pcoHh.slice(0, MAX_PER_RUN).map(h => ({
     householdId: h.id,
     name: h.attributes?.name || h.attributes?.label || 'Household'
   }));
+  console.log('Mapped households:', JSON.stringify(hhMapped.slice(0, 3), null, 2));
+  
+  console.log('Calling fiberyUpsertHouseholds...');
   const hhUpserts = await fiberyUpsertHouseholds(hhMapped);
 
   // Build index HouseholdID -> fibery/id from Fibery response
