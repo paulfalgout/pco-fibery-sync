@@ -67,7 +67,7 @@ export async function fiberyQueryPeopleSince(tsISO) {
     const queryArgs = {
       query: {
         'q/from': `${FIBERY_SPACE}/People`,
-        'q/select': ['fibery/id', F.People('Name'), F.People('Person ID'), F.People('Household'), 'fibery/modification-date'],
+        'q/select': ['fibery/id', F.People('Name'), F.People('Person ID'), 'fibery/modification-date'],
         'q/limit': 1000
       }
     };
@@ -107,7 +107,7 @@ export async function fiberyQueryHouseholdsSince(tsISO) {
     const queryArgs = {
       query: {
         'q/from': `${FIBERY_SPACE}/Household`,
-        'q/select': ['fibery/id', F.Household('Name'), F.Household('Household ID'), F.Household('Members'), 'fibery/modification-date'],
+        'q/select': ['fibery/id', F.Household('Name'), F.Household('Household ID'), 'fibery/modification-date'],
         'q/limit': 1000
       }
     };

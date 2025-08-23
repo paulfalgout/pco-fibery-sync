@@ -27,10 +27,13 @@ export const handler = async () => {
     getCursor('fiberyLastSync'),
   ]);
 
+  console.log(`Previous cursors - PCO: ${pcoLast || 'NONE (first run)'}, Fibery: ${fiberyLast || 'NONE (first run)'}`);
+
   // === PCO -> Fibery ===
+  // For first run, pass null to get ALL records (no timestamp filter)
   const [pcoPeep, pcoHh] = await Promise.all([
-    pcoPeopleSince(pcoLast || new Date(0).toISOString()),
-    pcoHouseholdsSince(pcoLast || new Date(0).toISOString()),
+    pcoPeopleSince(pcoLast), // null on first run = full sync
+    pcoHouseholdsSince(pcoLast), // null on first run = full sync
   ]);
 
   // Upsert Households first
@@ -61,9 +64,10 @@ export const handler = async () => {
 
   // === Fibery -> PCO ===
   console.log('Querying Fibery for changes...');
+  // For first run, pass null to get ALL records (no timestamp filter)
   const [fibPeople, fibHh] = await Promise.all([
-    fiberyQueryPeopleSince(fiberyLast),
-    fiberyQueryHouseholdsSince(fiberyLast),
+    fiberyQueryPeopleSince(fiberyLast), // null on first run = full sync
+    fiberyQueryHouseholdsSince(fiberyLast), // null on first run = full sync
   ]);
 
   console.log('Fibery query results:', {
@@ -79,6 +83,11 @@ export const handler = async () => {
   const safeFibHh = Array.isArray(fibHh) ? fibHh : [];
   const safeFibPeople = Array.isArray(fibPeople) ? fibPeople : [];
 
+  // Skip Fibery → PCO sync for now to avoid validation errors
+  // This sync is primarily PCO → Fibery (church data into Fibery)
+  console.log('Skipping Fibery → PCO sync (primarily one-way: PCO → Fibery)');
+  
+  /*
   for (const h of safeFibHh.slice(0, MAX_PER_RUN)) {
     await pcoUpsertHousehold({
       householdId: h[`${process.env.FIBERY_SPACE}/Household/Household ID`],
@@ -94,6 +103,7 @@ export const handler = async () => {
       householdId: rel?.[`${process.env.FIBERY_SPACE}/Household/Household ID`] || null,
     });
   }
+  */
 
   // Update cursors only if we got here without throwing
   await Promise.all([
