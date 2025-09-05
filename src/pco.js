@@ -1,4 +1,5 @@
 import { http } from './http.js';
+import { DataConverter } from './fibery.js';
 
 const BASE = 'https://api.planningcenteronline.com/people/v2';
 const auth = 'Basic ' + Buffer.from(`${process.env.PCO_APP_ID}:${process.env.PCO_SECRET}`).toString('base64');
@@ -40,6 +41,30 @@ export async function pcoPeopleSince(tsISO) {
   if (tsISO) url.searchParams.set('where[updated_at][gte]', tsISO);
   url.searchParams.set('order', 'updated_at');
   url.searchParams.set('per_page', '100');
+  
+  // Include all the fields we need for bidirectional sync
+  const includeFields = [
+    'first_name',
+    'last_name', 
+    'name',
+    'status',
+    'birthdate',
+    'child',
+    'given_name',
+    'grade',
+    'middle_name',
+    'nickname',
+    'inactivated_at',
+    'membership',
+    'directory_status',
+    'updated_at',
+    'created_at'
+  ];
+  
+  // Note: PCO API uses include parameter for relationships and fields parameter for attributes
+  // We'll let the API return all attributes by default to ensure we don't miss any fields
+  // url.searchParams.set('fields[person]', includeFields.join(','));
+  
   return await listAll(url.href);
 }
 
@@ -69,16 +94,44 @@ export async function pcoUpsertHousehold({ householdId, name }) {
   }
 }
 
-export async function pcoUpsertPerson({ personId, name, householdId, firstName, lastName }) {
+export async function pcoUpsertPerson({ 
+  personId, 
+  name, 
+  householdId, 
+  firstName, 
+  lastName,
+  status,
+  birthdate,
+  child,
+  givenName,
+  grade,
+  middleName,
+  nickname,
+  inactivatedAt,
+  membership,
+  directoryStatus
+}) {
   // Parse name into first/last if not provided separately
   const nameParts = name ? name.split(' ') : [];
   const first = firstName || nameParts[0] || '';
   const last = lastName || nameParts.slice(1).join(' ') || '';
   
   const attributes = {
-    first_name: first,
-    last_name: last
+    first_name: DataConverter.fiberyToPcoText(first),
+    last_name: DataConverter.fiberyToPcoText(last)
   };
+  
+  // Add all the new bidirectional fields with proper conversion
+  if (status !== undefined) attributes.status = DataConverter.fiberyToPcoText(status);
+  if (birthdate !== undefined) attributes.birthdate = DataConverter.fiberyToPcoDate(birthdate);
+  if (child !== undefined) attributes.child = DataConverter.fiberyToPcoBoolean(child);
+  if (givenName !== undefined) attributes.given_name = DataConverter.fiberyToPcoText(givenName);
+  if (grade !== undefined) attributes.grade = DataConverter.fiberyToPcoInteger(grade);
+  if (middleName !== undefined) attributes.middle_name = DataConverter.fiberyToPcoText(middleName);
+  if (nickname !== undefined) attributes.nickname = DataConverter.fiberyToPcoText(nickname);
+  if (inactivatedAt !== undefined) attributes.inactivated_at = DataConverter.fiberyToPcoDateTime(inactivatedAt);
+  if (membership !== undefined) attributes.membership = DataConverter.fiberyToPcoText(membership);
+  if (directoryStatus !== undefined) attributes.directory_status = DataConverter.fiberyToPcoText(directoryStatus);
   
   const payload = personId ?
     { data: { type: 'Person', id: personId, attributes } } :

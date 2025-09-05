@@ -1,6 +1,6 @@
 import { getCursor, setCursor } from './state.js';
 import { pcoPeopleSince, pcoHouseholdsSince, pcoUpsertHousehold, pcoUpsertPerson, pcoTestConnection } from './pco.js';
-import { fiberyQueryPeopleSince, fiberyQueryHouseholdsSince, fiberyUpsertHouseholds, fiberyUpsertPeople, fiberyTestConnection } from './fibery.js';
+import { fiberyQueryPeopleSince, fiberyQueryHouseholdsSince, fiberyUpsertHouseholds, fiberyUpsertPeople, fiberyTestConnection, DataConverter } from './fibery.js';
 
 const MAX_PER_RUN = 500; // guardrail
 
@@ -55,11 +55,7 @@ export const handler = async () => {
     if (id && fid) hhIndex.set(String(id), fid);
   }
 
-  const peepMapped = pcoPeep.slice(0, MAX_PER_RUN).map(p => ({
-    personId: p.id,
-    name: [p.attributes?.first_name, p.attributes?.last_name].filter(Boolean).join(' ') || p.attributes?.name,
-    householdId: p.relationships?.households?.data?.[0]?.id || null,
-  }));
+  const peepMapped = pcoPeep.slice(0, MAX_PER_RUN).map(p => DataConverter.mapPcoPersonToFibery(p));
   await fiberyUpsertPeople(peepMapped, { householdIndexById: hhIndex });
 
   // === Fibery -> PCO ===
@@ -88,19 +84,20 @@ export const handler = async () => {
   console.log('Skipping Fibery → PCO sync (primarily one-way: PCO → Fibery)');
   
   /*
+  // Process people with full field mapping using DataConverter
+  for (const p of safeFibPeople.slice(0, MAX_PER_RUN)) {
+    try {
+      const mappedPerson = DataConverter.mapFiberyPersonToPco(p, process.env.FIBERY_SPACE);
+      await pcoUpsertPerson(mappedPerson);
+    } catch (error) {
+      console.error('Error upserting person to PCO:', error, { personId: p[`${process.env.FIBERY_SPACE}/People/Person ID`] });
+    }
+  }
+  
   for (const h of safeFibHh.slice(0, MAX_PER_RUN)) {
     await pcoUpsertHousehold({
       householdId: h[`${process.env.FIBERY_SPACE}/Household/Household ID`],
       name: h[`${process.env.FIBERY_SPACE}/Household/Name`]
-    });
-  }
-
-  for (const p of safeFibPeople.slice(0, MAX_PER_RUN)) {
-    const rel = p[`${process.env.FIBERY_SPACE}/People/Household`];
-    await pcoUpsertPerson({
-      personId: p[`${process.env.FIBERY_SPACE}/People/Person ID`],
-      name: p[`${process.env.FIBERY_SPACE}/People/Name`],
-      householdId: rel?.[`${process.env.FIBERY_SPACE}/Household/Household ID`] || null,
     });
   }
   */

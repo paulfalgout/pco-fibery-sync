@@ -9,6 +9,139 @@ function hdr() {
   return { 'Authorization': `Token ${FIBERY_TOKEN}`, 'Content-Type': 'application/json' };
 }
 
+// Data conversion utilities for PCO <-> Fibery sync
+export const DataConverter = {
+  // Convert PCO date (YYYY-MM-DD) to Fibery date format
+  pcoToFiberyDate: (pcoDate) => {
+    if (!pcoDate) return null;
+    // PCO dates are already in YYYY-MM-DD format which Fibery accepts
+    return pcoDate;
+  },
+  
+  // Convert Fibery date to PCO date format (YYYY-MM-DD)
+  fiberyToPcoDate: (fiberyDate) => {
+    if (!fiberyDate) return null;
+    // If it's already a string in YYYY-MM-DD format, return as-is
+    if (typeof fiberyDate === 'string' && fiberyDate.match(/^\d{4}-\d{2}-\d{2}$/)) {
+      return fiberyDate;
+    }
+    // If it's a Date object or other format, convert to YYYY-MM-DD
+    const date = new Date(fiberyDate);
+    if (isNaN(date.getTime())) return null;
+    return date.toISOString().split('T')[0];
+  },
+  
+  // Convert PCO datetime (ISO 8601) to Fibery datetime format
+  pcoToFiberyDateTime: (pcoDateTime) => {
+    if (!pcoDateTime) return null;
+    // PCO sends ISO 8601 format which Fibery accepts
+    return pcoDateTime;
+  },
+  
+  // Convert Fibery datetime to PCO datetime format (ISO 8601)
+  fiberyToPcoDateTime: (fiberyDateTime) => {
+    if (!fiberyDateTime) return null;
+    // If it's already ISO 8601 format, return as-is
+    if (typeof fiberyDateTime === 'string' && fiberyDateTime.includes('T')) {
+      return fiberyDateTime;
+    }
+    // Convert to ISO 8601 format
+    const date = new Date(fiberyDateTime);
+    if (isNaN(date.getTime())) return null;
+    return date.toISOString();
+  },
+  
+  // Convert PCO boolean to Fibery boolean
+  pcoToFiberyBoolean: (pcoBoolean) => {
+    if (pcoBoolean === null || pcoBoolean === undefined) return null;
+    return Boolean(pcoBoolean);
+  },
+  
+  // Convert Fibery boolean to PCO boolean
+  fiberyToPcoBoolean: (fiberyBoolean) => {
+    if (fiberyBoolean === null || fiberyBoolean === undefined) return null;
+    return Boolean(fiberyBoolean);
+  },
+  
+  // Convert PCO text to Fibery text (handle nulls)
+  pcoToFiberyText: (pcoText) => {
+    if (pcoText === null || pcoText === undefined || pcoText === '') return null;
+    return String(pcoText);
+  },
+  
+  // Convert Fibery text to PCO text (handle nulls)
+  fiberyToPcoText: (fiberyText) => {
+    if (fiberyText === null || fiberyText === undefined || fiberyText === '') return null;
+    return String(fiberyText);
+  },
+  
+  // Convert PCO integer to Fibery integer
+  pcoToFiberyInteger: (pcoInteger) => {
+    if (pcoInteger === null || pcoInteger === undefined) return null;
+    const num = parseInt(pcoInteger, 10);
+    return isNaN(num) ? null : num;
+  },
+  
+  // Convert Fibery integer to PCO integer
+  fiberyToPcoInteger: (fiberyInteger) => {
+    if (fiberyInteger === null || fiberyInteger === undefined) return null;
+    const num = parseInt(fiberyInteger, 10);
+    return isNaN(num) ? null : num;
+  },
+  
+  // Handle null/empty values
+  sanitizeValue: (value) => {
+    if (value === null || value === undefined || value === '') return null;
+    return value;
+  },
+  
+  // Create a person mapping object from PCO data
+  mapPcoPersonToFibery: (pcoPersonData) => {
+    const attrs = pcoPersonData.attributes || {};
+    return {
+      personId: pcoPersonData.id,
+      name: [attrs.first_name, attrs.last_name].filter(Boolean).join(' ') || attrs.name || 'Unnamed Person',
+      firstName: DataConverter.pcoToFiberyText(attrs.first_name),
+      lastName: DataConverter.pcoToFiberyText(attrs.last_name),
+      status: DataConverter.pcoToFiberyText(attrs.status),
+      birthdate: DataConverter.pcoToFiberyDate(attrs.birthdate),
+      child: DataConverter.pcoToFiberyBoolean(attrs.child),
+      givenName: DataConverter.pcoToFiberyText(attrs.given_name),
+      grade: DataConverter.pcoToFiberyInteger(attrs.grade),
+      middleName: DataConverter.pcoToFiberyText(attrs.middle_name),
+      nickname: DataConverter.pcoToFiberyText(attrs.nickname),
+      inactivatedAt: DataConverter.pcoToFiberyDateTime(attrs.inactivated_at),
+      membership: DataConverter.pcoToFiberyText(attrs.membership),
+      directoryStatus: DataConverter.pcoToFiberyText(attrs.directory_status),
+      householdId: pcoPersonData.relationships?.households?.data?.[0]?.id || null,
+    };
+  },
+  
+  // Create a person mapping object from Fibery data
+  mapFiberyPersonToPco: (fiberyPersonData, fiberySpace) => {
+    const household = fiberyPersonData[`${fiberySpace}/People/Household`];
+    const householdId = household ? household[`${fiberySpace}/Household/Household ID`] : null;
+    
+    return {
+      personId: fiberyPersonData[`${fiberySpace}/People/Person ID`],
+      name: fiberyPersonData[`${fiberySpace}/People/Name`],
+      firstName: fiberyPersonData[`${fiberySpace}/People/First Name`],
+      lastName: fiberyPersonData[`${fiberySpace}/People/Last Name`],
+      status: fiberyPersonData[`${fiberySpace}/People/Status`],
+      birthdate: fiberyPersonData[`${fiberySpace}/People/Birthdate`],
+      child: fiberyPersonData[`${fiberySpace}/People/Child`],
+      givenName: fiberyPersonData[`${fiberySpace}/People/Given Name`],
+      grade: fiberyPersonData[`${fiberySpace}/People/Grade`],
+      middleName: fiberyPersonData[`${fiberySpace}/People/Middle Name`],
+      nickname: fiberyPersonData[`${fiberySpace}/People/Nickname`],
+      inactivatedAt: fiberyPersonData[`${fiberySpace}/People/Inactivated At`],
+      membership: fiberyPersonData[`${fiberySpace}/People/Membership`],
+      directoryStatus: fiberyPersonData[`${fiberySpace}/People/Directory Status`],
+      householdId: householdId,
+    };
+  }
+};
+
 // Utilities to build fully-qualified field names
 const F = {
   People: (f) => {
@@ -17,6 +150,19 @@ const F = {
     // Handle database-specific fields
     if (f === 'Person ID') return `${FIBERY_SPACE}/Person ID`;
     if (f === 'Household') return `${FIBERY_SPACE}/Household`;
+    // New bidirectional fields
+    if (f === 'First Name') return `${FIBERY_SPACE}/First Name`;
+    if (f === 'Last Name') return `${FIBERY_SPACE}/Last Name`;
+    if (f === 'Status') return `${FIBERY_SPACE}/Status`;
+    if (f === 'Birthdate') return `${FIBERY_SPACE}/Birthdate`;
+    if (f === 'Child') return `${FIBERY_SPACE}/Child`;
+    if (f === 'Given Name') return `${FIBERY_SPACE}/Given Name`;
+    if (f === 'Grade') return `${FIBERY_SPACE}/Grade`;
+    if (f === 'Middle Name') return `${FIBERY_SPACE}/Middle Name`;
+    if (f === 'Nickname') return `${FIBERY_SPACE}/Nickname`;
+    if (f === 'Inactivated At') return `${FIBERY_SPACE}/Inactivated At`;
+    if (f === 'Membership') return `${FIBERY_SPACE}/Membership`;
+    if (f === 'Directory Status') return `${FIBERY_SPACE}/Directory Status`;
     // Default fallback for any other fields
     return `${FIBERY_SPACE}/${f}`;
   },
@@ -67,7 +213,31 @@ export async function fiberyQueryPeopleSince(tsISO) {
     const queryArgs = {
       query: {
         'q/from': `${FIBERY_SPACE}/People`,
-        'q/select': ['fibery/id', F.People('Name'), F.People('Person ID'), 'fibery/modification-date'],
+        'q/select': [
+          'fibery/id', 
+          F.People('Name'), 
+          F.People('Person ID'), 
+          F.People('First Name'),
+          F.People('Last Name'),
+          F.People('Status'),
+          F.People('Birthdate'),
+          F.People('Child'),
+          F.People('Given Name'),
+          F.People('Grade'),
+          F.People('Middle Name'),
+          F.People('Nickname'),
+          F.People('Inactivated At'),
+          F.People('Membership'),
+          F.People('Directory Status'),
+          {
+            [F.People('Household')]: [
+              'fibery/id',
+              F.Household('Household ID'),
+              F.Household('Name')
+            ]
+          },
+          'fibery/modification-date'
+        ],
         'q/limit': 1000
       }
     };
@@ -239,12 +409,37 @@ export async function fiberyUpsertPeople(items, { householdIndexById } = {}) {
     const rel = p.householdId && householdIndexById?.get(p.householdId)
       ? { 'fibery/id': householdIndexById.get(p.householdId) }
       : null;
+    
+    // Build entity data with all fields
+    const entityData = {
+      [F.People('Name')]: p.name,
+      [F.People('First Name')]: p.firstName,
+      [F.People('Last Name')]: p.lastName,
+      [F.People('Status')]: p.status,
+      [F.People('Birthdate')]: p.birthdate,
+      [F.People('Child')]: p.child,
+      [F.People('Given Name')]: p.givenName,
+      [F.People('Grade')]: p.grade,
+      [F.People('Middle Name')]: p.middleName,
+      [F.People('Nickname')]: p.nickname,
+      [F.People('Inactivated At')]: p.inactivatedAt,
+      [F.People('Membership')]: p.membership,
+      [F.People('Directory Status')]: p.directoryStatus,
+      [F.People('Household')]: rel
+    };
+    
     return existing ? {
       command: 'fibery.entity/update',
-      args: { entity: { 'fibery/id': existing }, patch: { [F.People('Name')]: p.name, [F.People('Household')]: rel } }
+      args: { entity: { 'fibery/id': existing }, patch: entityData }
     } : {
       command: 'fibery.entity/create',
-      args: { type: `${FIBERY_SPACE}/People`, entity: { [F.People('Name')]: p.name, [F.People('Person ID')]: p.personId, [F.People('Household')]: rel } }
+      args: { 
+        type: `${FIBERY_SPACE}/People`, 
+        entity: { 
+          ...entityData,
+          [F.People('Person ID')]: p.personId
+        }
+      }
     };
   });
   const res = await http(FIBERY_API, { method: 'POST', headers: hdr(), body: JSON.stringify(cmds) });
