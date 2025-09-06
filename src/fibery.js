@@ -380,18 +380,44 @@ export async function fiberyUpsertHouseholds(items) {
 export async function fiberyUpsertPeople(items, { householdIndexById } = {}) {
   if (!items?.length) return [];
   const ids = items.map(p => p.personId).filter(Boolean);
+  
+  // First, get existing records with ALL their current data
   const find = [{
     command: 'fibery.entity/query',
     args: {
       query: {
         'q/from': `${FIBERY_SPACE}/People`,
-        'q/select': ['fibery/id', F.People('Person ID')],
+        'q/select': [
+          'fibery/id', 
+          F.People('Person ID'),
+          F.People('Name'),
+          F.People('First Name'),
+          F.People('Last Name'), 
+          F.People('Status'),
+          F.People('Birthdate'),
+          F.People('Child'),
+          F.People('Given Name'),
+          F.People('Grade'),
+          F.People('Middle Name'),
+          F.People('Nickname'),
+          F.People('Inactivated At'),
+          F.People('Membership'),
+          F.People('Directory Status'),
+          {
+            [F.People('Household')]: [
+              'fibery/id',
+              F.Household('Household ID'),
+              F.Household('Name')
+            ]
+          }
+        ],
         'q/where': ['in', [F.People('Person ID')], '$ids'],
         'q/limit': ids.length
       },
       params: { '$ids': ids }
     }
   }];
+  
   const foundRes = await http(FIBERY_API, { method: 'POST', headers: hdr(), body: JSON.stringify(find) });
   const found = await foundRes.json();
   console.log('Fibery people query response:', JSON.stringify(found, null, 2));
@@ -402,16 +428,42 @@ export async function fiberyUpsertPeople(items, { householdIndexById } = {}) {
     return [];
   }
   
-  const index = new Map(resultData.map(r => [r[F.People('Person ID')], r['fibery/id']]));
+  const index = new Map(resultData.map(r => [r[F.People('Person ID')], r]));
 
-  const cmds = items.map(p => {
+  console.log(`🔍 Found ${index.size} existing Fibery records to update`);
+  console.log(`🔍 Processing ${items.length} PCO records`);
+  
+  // Define newly-mapped fields that should always be updated on existing records
+  const newlyMappedFields = [
+    F.People('First Name'),
+    F.People('Last Name'), 
+    F.People('Status'),
+    F.People('Birthdate'),
+    F.People('Child'),
+    F.People('Given Name'),
+    F.People('Grade'),
+    F.People('Middle Name'),
+    F.People('Nickname'),
+    F.People('Inactivated At'),
+    F.People('Membership'),
+    F.People('Directory Status')
+  ];
+  
+  let updateCount = 0;
+  let createCount = 0;
+  let skipCount = 0;
+
+  const cmds = [];
+  let loggedSample = false; // Only log detailed comparison for first few records
+  
+  for (const p of items) {
     const existing = index.get(p.personId);
     const rel = p.householdId && householdIndexById?.get(p.householdId)
       ? { 'fibery/id': householdIndexById.get(p.householdId) }
       : null;
     
-    // Build entity data with all fields
-    const entityData = {
+    // Build complete PCO entity data 
+    const pcoEntityData = {
       [F.People('Name')]: p.name,
       [F.People('First Name')]: p.firstName,
       [F.People('Last Name')]: p.lastName,
@@ -428,20 +480,87 @@ export async function fiberyUpsertPeople(items, { householdIndexById } = {}) {
       [F.People('Household')]: rel
     };
     
-    return existing ? {
-      command: 'fibery.entity/update',
-      args: { entity: { 'fibery/id': existing }, patch: entityData }
-    } : {
-      command: 'fibery.entity/create',
-      args: { 
-        type: `${FIBERY_SPACE}/People`, 
-        entity: { 
-          ...entityData,
-          [F.People('Person ID')]: p.personId
+    if (existing) {
+      // For updates: Create differential patch with only changed/new fields
+      const fieldsToUpdate = {};
+      
+      // Check each PCO field for changes or if it's newly mapped
+      for (const [fieldName, newValue] of Object.entries(pcoEntityData)) {
+        const currentValue = existing[fieldName];
+        const isNewlyMapped = newlyMappedFields.includes(fieldName);
+        const hasChanged = currentValue !== newValue;
+        
+        // Log detailed comparison for first few records to debug
+        if (!loggedSample && existing && (hasChanged || isNewlyMapped)) {
+          console.log(`🔍 Field comparison for ${p.name} (${p.personId}):`);
+          console.log(`  Field: ${fieldName}`);
+          console.log(`  Current (Fibery): ${JSON.stringify(currentValue)} (type: ${typeof currentValue})`);
+          console.log(`  New (PCO): ${JSON.stringify(newValue)} (type: ${typeof newValue})`);
+          console.log(`  Has changed: ${hasChanged}, Is newly mapped: ${isNewlyMapped}`);
+        }
+        
+        // Update if: value changed OR it's a newly mapped field OR current is null/undefined
+        if (hasChanged || isNewlyMapped || currentValue === null || currentValue === undefined) {
+          fieldsToUpdate[fieldName] = newValue;
         }
       }
-    };
-  });
+      
+      if (!loggedSample && existing && Object.keys(fieldsToUpdate).length > 1) {
+        loggedSample = true; // Only log once
+      }
+      
+      // Always ensure Person ID is maintained
+      fieldsToUpdate[F.People('Person ID')] = p.personId;
+      
+      // Remove null values from patch (except Person ID) to avoid Fibery update issues
+      Object.keys(fieldsToUpdate).forEach(key => {
+        if (fieldsToUpdate[key] === null && key !== F.People('Person ID')) {
+          delete fieldsToUpdate[key];
+        }
+      });
+      
+      // Only create update command if there are actual changes
+      if (Object.keys(fieldsToUpdate).length > 1) { // > 1 because Person ID is always included
+        cmds.push({
+          command: 'fibery.entity/update',
+          args: { 
+            type: `${FIBERY_SPACE}/People`,  // ✅ Add required type field
+            entity: { 'fibery/id': existing['fibery/id'] }, 
+            patch: fieldsToUpdate  // Only changed/new fields
+          }
+        });
+        updateCount++;
+      } else {
+        skipCount++;
+      }
+    } else {
+      // For creates: use complete PCO data
+      cmds.push({
+        command: 'fibery.entity/create',
+        args: { 
+          type: `${FIBERY_SPACE}/People`, 
+          entity: { 
+            ...pcoEntityData,
+            [F.People('Person ID')]: p.personId
+          }
+        }
+      });
+      createCount++;
+    }
+  }
+  
+  console.log(`🔍 Will execute ${updateCount} updates, ${createCount} creates, ${skipCount} skipped (no changes)`);
+  
+  // Log a sample update command to see what we're sending
+  const sampleUpdate = cmds.find(cmd => cmd.command === 'fibery.entity/update');
+  if (sampleUpdate) {
+    console.log('🔍 Sample update patch:', JSON.stringify(sampleUpdate.args.patch, null, 2));
+    console.log('🔍 Full update command:', JSON.stringify(sampleUpdate, null, 2));
+  }
+  
+  // Log the complete payload being sent to Fibery
+  console.log('🔍 Complete Fibery update payload:', JSON.stringify(cmds.slice(0, 3), null, 2)); // Log first 3 commands
+  
   const res = await http(FIBERY_API, { method: 'POST', headers: hdr(), body: JSON.stringify(cmds) });
   return await res.json();
 }

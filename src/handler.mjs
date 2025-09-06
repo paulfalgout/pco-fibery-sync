@@ -29,11 +29,24 @@ export const handler = async () => {
 
   console.log(`Previous cursors - PCO: ${pcoLast || 'NONE (first run)'}, Fibery: ${fiberyLast || 'NONE (first run)'}`);
 
+  // === FORCE FULL RE-SYNC FOR NEW FIELDS ===
+  // Temporarily override cursors to force full sync of all records
+  // This will update all existing records with the new bidirectional fields
+  // Comment out these lines after the full re-sync is complete
+  const forceFullSync = false; // ✅ Set to false after successful sync
+  const effectivePcoLast = forceFullSync ? null : pcoLast;
+  const effectiveFiberyLast = forceFullSync ? null : fiberyLast;
+  
+  if (forceFullSync) {
+    console.log('🔄 FORCING FULL RE-SYNC to update existing records with new fields...');
+    console.log('💡 After this sync completes successfully, set forceFullSync = false to resume normal incremental sync');
+  }
+
   // === PCO -> Fibery ===
   // For first run, pass null to get ALL records (no timestamp filter)
   const [pcoPeep, pcoHh] = await Promise.all([
-    pcoPeopleSince(pcoLast), // null on first run = full sync
-    pcoHouseholdsSince(pcoLast), // null on first run = full sync
+    pcoPeopleSince(effectivePcoLast), // Use effective cursor (null for full sync)
+    pcoHouseholdsSince(effectivePcoLast), // Use effective cursor (null for full sync)
   ]);
 
   // Upsert Households first
@@ -56,14 +69,20 @@ export const handler = async () => {
   }
 
   const peepMapped = pcoPeep.slice(0, MAX_PER_RUN).map(p => DataConverter.mapPcoPersonToFibery(p));
-  await fiberyUpsertPeople(peepMapped, { householdIndexById: hhIndex });
+  
+  console.log(`🔍 Processing ${peepMapped.length} people from PCO. First few Person IDs:`, 
+    peepMapped.slice(0, 5).map(p => `${p.personId}:${p.name}`));
+  
+  console.log('Calling fiberyUpsertPeople...');
+  const peopleUpsertResult = await fiberyUpsertPeople(peepMapped, { householdIndexById: hhIndex });
+  console.log('fiberyUpsertPeople response:', JSON.stringify(peopleUpsertResult, null, 2));
 
   // === Fibery -> PCO ===
   console.log('Querying Fibery for changes...');
   // For first run, pass null to get ALL records (no timestamp filter)
   const [fibPeople, fibHh] = await Promise.all([
-    fiberyQueryPeopleSince(fiberyLast), // null on first run = full sync
-    fiberyQueryHouseholdsSince(fiberyLast), // null on first run = full sync
+    fiberyQueryPeopleSince(effectiveFiberyLast), // Use effective cursor (null for full sync)
+    fiberyQueryHouseholdsSince(effectiveFiberyLast), // Use effective cursor (null for full sync)
   ]);
 
   console.log('Fibery query results:', {

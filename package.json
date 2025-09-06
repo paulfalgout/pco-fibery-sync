@@ -8,6 +8,6 @@
     "@aws-sdk/client-ssm": "^3.620.0"
   },
   "scripts": {
-    "deploy": "sam deploy"
+    "deploy": "sam build && sam deploy --no-confirm-changeset"
   }
 }
