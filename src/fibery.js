@@ -470,9 +470,9 @@ export async function fiberyUpsertPeople(items, { householdIndexById } = {}) {
       ? { 'fibery/id': householdIndexById.get(p.householdId) }
       : null;
     
-    // Build complete PCO entity data 
     const pcoEntityData = {
       [F.People('Name')]: p.name,
+      [F.People('Person ID')]: p.personId,
       [F.People('First Name')]: p.firstName,
       [F.People('Last Name')]: p.lastName,
       [F.People('Status')]: p.status,
@@ -532,9 +532,11 @@ export async function fiberyUpsertPeople(items, { householdIndexById } = {}) {
         cmds.push({
           command: 'fibery.entity/update',
           args: { 
-            type: `${FIBERY_SPACE}/People`,  // ✅ Add required type field
-            entity: { 'fibery/id': existing['fibery/id'] }, 
-            patch: fieldsToUpdate  // Only changed/new fields
+            type: `${FIBERY_SPACE}/People`,
+            entity: { 
+              'fibery/id': existing['fibery/id'],
+              ...fieldsToUpdate  // ✅ Include fields directly in entity, not separate patch
+            }
           }
         });
         updateCount++;
