@@ -9,6 +9,14 @@ function hdr() {
   return { 'Authorization': `Token ${FIBERY_TOKEN}`, 'Content-Type': 'application/json' };
 }
 
+// PCO API headers for bidirectional sync
+function pcoHeaders() {
+  return {
+    'Authorization': `Bearer ${process.env.PCO_SECRET}`,
+    'Content-Type': 'application/json'
+  };
+}
+
 // Data conversion utilities for PCO <-> Fibery sync
 export const DataConverter = {
   // Convert PCO date (YYYY-MM-DD) to Fibery date format
@@ -563,4 +571,96 @@ export async function fiberyUpsertPeople(items, { householdIndexById } = {}) {
   
   const res = await http(FIBERY_API, { method: 'POST', headers: hdr(), body: JSON.stringify(cmds) });
   return await res.json();
+}
+
+// PCO Update Functions for Bidirectional Sync (Fibery as Source of Truth)
+
+export async function pcoUpdatePerson(personId, updates) {
+  const PCO_API = `https://api.planningcenteronline.com/people/v2/people/${personId}`;
+  
+  const body = {
+    data: {
+      type: 'Person',
+      id: personId,
+      attributes: updates
+    }
+  };
+  
+  console.log(`🔄 Updating PCO person ${personId} with:`, JSON.stringify(updates, null, 2));
+  
+  const res = await http(PCO_API, {
+    method: 'PATCH',
+    headers: pcoHeaders(),
+    body: JSON.stringify(body)
+  });
+  
+  if (!res.ok) {
+    const error = await res.text();
+    console.error(`❌ PCO update failed for person ${personId}:`, error);
+    throw new Error(`PCO update failed: ${error}`);
+  }
+  
+  return await res.json();
+}
+
+export async function fiberyToPcoSync(fiberyPeople) {
+  if (!fiberyPeople?.length) {
+    console.log('No Fibery people to sync to PCO');
+    return [];
+  }
+  
+  console.log(`🔄 Syncing ${fiberyPeople.length} Fibery changes to PCO`);
+  
+  const results = [];
+  
+  for (const fiberyPerson of fiberyPeople) {
+    try {
+      const personId = fiberyPerson[F.People('Person ID')];
+      if (!personId) {
+        console.warn('Skipping Fibery person without Person ID:', fiberyPerson);
+        continue;
+      }
+      
+      // Map Fibery data to PCO format
+      const mapped = DataConverter.mapFiberyPersonToPco(fiberyPerson, FIBERY_SPACE);
+      
+      // Build PCO update payload
+      const pcoUpdates = {
+        first_name: mapped.firstName,
+        last_name: mapped.lastName,
+        status: mapped.status,
+        birthdate: DataConverter.fiberyToPcoDate(mapped.birthdate),
+        child: mapped.child,
+        given_name: mapped.givenName,
+        grade: mapped.grade,
+        middle_name: mapped.middleName,
+        nickname: mapped.nickname,
+        membership: mapped.membership,
+        directory_status: mapped.directoryStatus
+        // Note: inactivated_at is typically read-only in PCO
+      };
+      
+      // Remove null values
+      Object.keys(pcoUpdates).forEach(key => {
+        if (pcoUpdates[key] === null || pcoUpdates[key] === undefined) {
+          delete pcoUpdates[key];
+        }
+      });
+      
+      // Only update if there are actual changes
+      if (Object.keys(pcoUpdates).length > 0) {
+        const result = await pcoUpdatePerson(personId, pcoUpdates);
+        results.push(result);
+        console.log(`✅ Updated PCO person ${personId}`);
+      } else {
+        console.log(`⏭️ No changes needed for PCO person ${personId}`);
+      }
+      
+    } catch (error) {
+      console.error(`❌ Failed to sync Fibery person to PCO:`, error);
+      results.push({ error: error.message, person: fiberyPerson });
+    }
+  }
+  
+  return results;
 }

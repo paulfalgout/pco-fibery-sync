@@ -1,6 +1,6 @@
 import { getCursor, setCursor } from './state.js';
 import { pcoPeopleSince, pcoHouseholdsSince, pcoUpsertHousehold, pcoUpsertPerson, pcoTestConnection } from './pco.js';
-import { fiberyQueryPeopleSince, fiberyQueryHouseholdsSince, fiberyUpsertHouseholds, fiberyUpsertPeople, fiberyTestConnection, DataConverter } from './fibery.js';
+import { fiberyQueryPeopleSince, fiberyQueryHouseholdsSince, fiberyUpsertHouseholds, fiberyUpsertPeople, fiberyTestConnection, DataConverter, fiberyToPcoSync } from './fibery.js';
 
 const MAX_PER_RUN = 500; // guardrail
 
@@ -98,28 +98,21 @@ export const handler = async () => {
   const safeFibHh = Array.isArray(fibHh) ? fibHh : [];
   const safeFibPeople = Array.isArray(fibPeople) ? fibPeople : [];
 
-  // Skip Fibery → PCO sync for now to avoid validation errors
-  // This sync is primarily PCO → Fibery (church data into Fibery)
-  console.log('Skipping Fibery → PCO sync (primarily one-way: PCO → Fibery)');
-  
-  /*
-  // Process people with full field mapping using DataConverter
-  for (const p of safeFibPeople.slice(0, MAX_PER_RUN)) {
+  // === Fibery → PCO Sync (Fibery as Source of Truth) ===
+  if (safeFibPeople.length > 0) {
+    console.log('🔄 Starting Fibery → PCO sync (Fibery is source of truth)');
     try {
-      const mappedPerson = DataConverter.mapFiberyPersonToPco(p, process.env.FIBERY_SPACE);
-      await pcoUpsertPerson(mappedPerson);
+      const fiberyToPcoResults = await fiberyToPcoSync(safeFibPeople.slice(0, MAX_PER_RUN));
+      console.log(`✅ Fibery → PCO sync completed: ${fiberyToPcoResults.length} updates processed`);
     } catch (error) {
-      console.error('Error upserting person to PCO:', error, { personId: p[`${process.env.FIBERY_SPACE}/People/Person ID`] });
+      console.error('❌ Fibery → PCO sync failed:', error);
     }
+  } else {
+    console.log('No Fibery changes to sync to PCO');
   }
-  
-  for (const h of safeFibHh.slice(0, MAX_PER_RUN)) {
-    await pcoUpsertHousehold({
-      householdId: h[`${process.env.FIBERY_SPACE}/Household/Household ID`],
-      name: h[`${process.env.FIBERY_SPACE}/Household/Name`]
-    });
-  }
-  */
+
+  // Note: Household sync to PCO is typically not needed as PCO manages households
+  // but could be added here if required
 
   // Update cursors only if we got here without throwing
   await Promise.all([
