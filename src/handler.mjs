@@ -44,10 +44,14 @@ export const handler = async () => {
 
   // === PCO -> Fibery ===
   // For first run, pass null to get ALL records (no timestamp filter)
-  const [pcoPeep, pcoHh] = await Promise.all([
+  const [pcoResponse, pcoHh] = await Promise.all([
     pcoPeopleSince(effectivePcoLast), // Use effective cursor (null for full sync)
     pcoHouseholdsSince(effectivePcoLast), // Use effective cursor (null for full sync)
   ]);
+
+  // Extract people data and included relationships (emails, phones)
+  const pcoPeep = pcoResponse.data || [];
+  const pcoIncluded = pcoResponse.included || [];
 
   // Upsert Households first
   console.log(`Processing ${pcoHh.length} PCO households`);
@@ -68,7 +72,7 @@ export const handler = async () => {
     if (id && fid) hhIndex.set(String(id), fid);
   }
 
-  const peepMapped = pcoPeep.slice(0, MAX_PER_RUN).map(p => DataConverter.mapPcoPersonToFibery(p));
+  const peepMapped = pcoPeep.slice(0, MAX_PER_RUN).map(p => DataConverter.mapPcoPersonToFibery(p, pcoIncluded));
   
   console.log(`🔍 Processing ${peepMapped.length} people from PCO. First few Person IDs:`, 
     peepMapped.slice(0, 5).map(p => `${p.personId}:${p.name}`));

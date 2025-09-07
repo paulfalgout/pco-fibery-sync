@@ -104,8 +104,32 @@ export const DataConverter = {
   },
   
   // Create a person mapping object from PCO data
-  mapPcoPersonToFibery: (pcoPersonData) => {
+  mapPcoPersonToFibery: (pcoPersonData, included = []) => {
     const attrs = pcoPersonData.attributes || {};
+    
+    // Import the email/phone extraction functions here to avoid circular dependency
+    const extractPrimaryEmail = (person, included) => {
+      if (!person.relationships?.emails?.data?.length) return null;
+      const personEmails = person.relationships.emails.data
+        .map(emailRef => included.find(item => item.type === 'Email' && item.id === emailRef.id))
+        .filter(Boolean);
+      if (!personEmails.length) return null;
+      const primaryEmail = personEmails.find(email => email.attributes?.primary === true);
+      const emailToUse = primaryEmail || personEmails[0];
+      return emailToUse?.attributes?.address || null;
+    };
+    
+    const extractPrimaryPhone = (person, included) => {
+      if (!person.relationships?.phone_numbers?.data?.length) return null;
+      const personPhones = person.relationships.phone_numbers.data
+        .map(phoneRef => included.find(item => item.type === 'PhoneNumber' && item.id === phoneRef.id))
+        .filter(Boolean);
+      if (!personPhones.length) return null;
+      const primaryPhone = personPhones.find(phone => phone.attributes?.primary === true);
+      const phoneToUse = primaryPhone || personPhones[0];
+      return phoneToUse?.attributes?.number || null;
+    };
+    
     return {
       personId: pcoPersonData.id,
       name: [attrs.first_name, attrs.last_name].filter(Boolean).join(' ') || attrs.name || 'Unnamed Person',
@@ -121,6 +145,8 @@ export const DataConverter = {
       inactivatedAt: DataConverter.pcoToFiberyDateTime(attrs.inactivated_at),
       membership: DataConverter.pcoToFiberyText(attrs.membership),
       directoryStatus: DataConverter.pcoToFiberyText(attrs.directory_status),
+      primaryEmail: DataConverter.pcoToFiberyText(extractPrimaryEmail(pcoPersonData, included)),
+      primaryPhone: DataConverter.pcoToFiberyText(extractPrimaryPhone(pcoPersonData, included)),
       householdId: pcoPersonData.relationships?.households?.data?.[0]?.id || null,
     };
   },
@@ -129,6 +155,9 @@ export const DataConverter = {
   mapFiberyPersonToPco: (fiberyPersonData, fiberySpace) => {
     const household = fiberyPersonData[`${fiberySpace}/People/Household`];
     const householdId = household ? household[`${fiberySpace}/Household/Household ID`] : null;
+    
+    const membership = fiberyPersonData[`${fiberySpace}/People/Membership`];
+    const membershipName = membership ? membership['enum/name'] : null;
     
     return {
       personId: fiberyPersonData[`${fiberySpace}/People/Person ID`],
@@ -143,8 +172,10 @@ export const DataConverter = {
       middleName: fiberyPersonData[`${fiberySpace}/People/Middle Name`],
       nickname: fiberyPersonData[`${fiberySpace}/People/Nickname`],
       inactivatedAt: fiberyPersonData[`${fiberySpace}/People/Inactivated At`],
-      membership: fiberyPersonData[`${fiberySpace}/People/Membership`],
+      membership: membershipName,
       directoryStatus: fiberyPersonData[`${fiberySpace}/People/Directory Status`],
+      primaryEmail: fiberyPersonData[`${fiberySpace}/People/Primary Email`],
+      primaryPhone: fiberyPersonData[`${fiberySpace}/People/Primary Phone`],
       householdId: householdId,
     };
   }
@@ -171,6 +202,8 @@ const F = {
     if (f === 'Inactivated At') return `${FIBERY_SPACE}/Inactivated At`;
     if (f === 'Membership') return `${FIBERY_SPACE}/Membership`;
     if (f === 'Directory Status') return `${FIBERY_SPACE}/Directory Status`;
+    if (f === 'Primary Email') return `${FIBERY_SPACE}/Primary Email`;
+    if (f === 'Primary Phone') return `${FIBERY_SPACE}/Primary Phone`;
     // Default fallback for any other fields
     return `${FIBERY_SPACE}/${f}`;
   },
@@ -235,8 +268,15 @@ export async function fiberyQueryPeopleSince(tsISO) {
           F.People('Middle Name'),
           F.People('Nickname'),
           F.People('Inactivated At'),
-          F.People('Membership'),
+          {
+            [F.People('Membership')]: [
+              'fibery/id',
+              'enum/name'  // Correct way to get dropdown option name
+            ]
+          },
           F.People('Directory Status'),
+          F.People('Primary Email'),
+          F.People('Primary Phone'),
           {
             [F.People('Household')]: [
               'fibery/id',
@@ -389,6 +429,20 @@ export async function fiberyUpsertPeople(items, { householdIndexById } = {}) {
   if (!items?.length) return [];
   const ids = items.map(p => p.personId).filter(Boolean);
   
+  // Get unique membership values to create/find membership dropdown options
+  const uniqueMemberships = [...new Set(items.map(p => p.membership).filter(Boolean))];
+  const membershipIndex = new Map();
+  
+  if (uniqueMemberships.length > 0) {
+    // For Fibery dropdown/enum fields, we typically don't need to create the options manually
+    // as they are predefined in the schema. We'll create a mapping for existing values.
+    // The membership relationship will be handled automatically by Fibery when we provide the name.
+    console.log(`🔍 Processing ${uniqueMemberships.length} unique membership values: ${uniqueMemberships.join(', ')}`);
+    
+    // For now, we'll handle membership as a text value and let Fibery resolve the dropdown
+    // If specific enum handling is needed, we'd query the enum values here
+  }
+  
   // First, get existing records with ALL their current data
   const find = [{
     command: 'fibery.entity/query',
@@ -409,8 +463,15 @@ export async function fiberyUpsertPeople(items, { householdIndexById } = {}) {
           F.People('Middle Name'),
           F.People('Nickname'),
           F.People('Inactivated At'),
-          F.People('Membership'),
+          {
+            [F.People('Membership')]: [
+              'fibery/id',
+              'enum/name'  // Correct way to get dropdown option name
+            ]
+          },
           F.People('Directory Status'),
+          F.People('Primary Email'),
+          F.People('Primary Phone'),
           {
             [F.People('Household')]: [
               'fibery/id',
@@ -454,7 +515,9 @@ export async function fiberyUpsertPeople(items, { householdIndexById } = {}) {
     F.People('Nickname'),
     F.People('Inactivated At'),
     F.People('Membership'),
-    F.People('Directory Status')
+    F.People('Directory Status'),
+    F.People('Primary Email'),
+    F.People('Primary Phone')
   ];
   
   let updateCount = 0;
@@ -470,6 +533,10 @@ export async function fiberyUpsertPeople(items, { householdIndexById } = {}) {
       ? { 'fibery/id': householdIndexById.get(p.householdId) }
       : null;
     
+    // For dropdown fields, we can often use the text value directly
+    // Fibery will resolve it to the correct enum option
+    const membershipValue = p.membership || null;
+    
     const pcoEntityData = {
       [F.People('Name')]: p.name,
       [F.People('Person ID')]: p.personId,
@@ -483,8 +550,10 @@ export async function fiberyUpsertPeople(items, { householdIndexById } = {}) {
       [F.People('Middle Name')]: p.middleName,
       [F.People('Nickname')]: p.nickname,
       [F.People('Inactivated At')]: p.inactivatedAt,
-      [F.People('Membership')]: p.membership,
+      [F.People('Membership')]: membershipValue,
       [F.People('Directory Status')]: p.directoryStatus,
+      [F.People('Primary Email')]: p.primaryEmail,
+      [F.People('Primary Phone')]: p.primaryPhone,
       [F.People('Household')]: rel
     };
     

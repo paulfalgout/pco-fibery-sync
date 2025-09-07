@@ -26,6 +26,20 @@ export async function pcoTestConnection() {
 
 async function listAll(url) {
   let results = [];
+  let allIncluded = [];
+  let next = url;
+  while (next) {
+    const res = await http(next, { headers: H() });
+    const json = await res.json();
+    results = results.concat(json.data || []);
+    if (json.included) allIncluded = allIncluded.concat(json.included);
+    next = json.links?.next || null; // PCO sends absolute next link
+  }
+  return { data: results, included: allIncluded };
+}
+
+async function listAllSimple(url) {
+  let results = [];
   let next = url;
   while (next) {
     const res = await http(next, { headers: H() });
@@ -41,6 +55,9 @@ export async function pcoPeopleSince(tsISO) {
   if (tsISO) url.searchParams.set('where[updated_at][gte]', tsISO);
   url.searchParams.set('order', 'updated_at');
   url.searchParams.set('per_page', '100');
+  
+  // Include emails and phone_numbers to get primary contact info
+  url.searchParams.set('include', 'emails,phone_numbers');
   
   // Include all the fields we need for bidirectional sync
   const includeFields = [
@@ -68,12 +85,48 @@ export async function pcoPeopleSince(tsISO) {
   return await listAll(url.href);
 }
 
+// Helper function to extract primary email from PCO person data
+export function extractPrimaryEmail(pcoPersonData, included = []) {
+  if (!pcoPersonData.relationships?.emails?.data?.length) return null;
+  
+  // Find all emails for this person in the included data
+  const personEmails = pcoPersonData.relationships.emails.data
+    .map(emailRef => included.find(item => item.type === 'Email' && item.id === emailRef.id))
+    .filter(Boolean);
+  
+  if (!personEmails.length) return null;
+  
+  // Look for primary email first, then fall back to first email
+  const primaryEmail = personEmails.find(email => email.attributes?.primary === true);
+  const emailToUse = primaryEmail || personEmails[0];
+  
+  return emailToUse?.attributes?.address || null;
+}
+
+// Helper function to extract primary phone from PCO person data
+export function extractPrimaryPhone(pcoPersonData, included = []) {
+  if (!pcoPersonData.relationships?.phone_numbers?.data?.length) return null;
+  
+  // Find all phone numbers for this person in the included data
+  const personPhones = pcoPersonData.relationships.phone_numbers.data
+    .map(phoneRef => included.find(item => item.type === 'PhoneNumber' && item.id === phoneRef.id))
+    .filter(Boolean);
+  
+  if (!personPhones.length) return null;
+  
+  // Look for primary phone first, then fall back to first phone
+  const primaryPhone = personPhones.find(phone => phone.attributes?.primary === true);
+  const phoneToUse = primaryPhone || personPhones[0];
+  
+  return phoneToUse?.attributes?.number || null;
+}
+
 export async function pcoHouseholdsSince(tsISO) {
   const url = new URL(`${BASE}/households`);
   if (tsISO) url.searchParams.set('where[updated_at][gte]', tsISO);
   url.searchParams.set('order', 'updated_at');
   url.searchParams.set('per_page', '100');
-  return await listAll(url.href);
+  return await listAllSimple(url.href);
 }
 
 // -- Upserts: confirm exact JSON:API types/attributes in your PCO account before enabling --
